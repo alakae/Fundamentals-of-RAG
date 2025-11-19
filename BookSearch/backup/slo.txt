@@ -1,0 +1,4 @@
+Service SLOs:
+- latency p95: 200ms
+- availability: 99.9%
+- error rate: <0.1%

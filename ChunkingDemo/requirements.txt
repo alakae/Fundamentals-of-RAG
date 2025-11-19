@@ -1,0 +1,9 @@
+# Core dependencies for document chunking
+PyPDF2>=3.0.0
+python-docx>=0.8.11
+transformers>=4.20.0
+torch>=1.12.0
+
+# Optional dependencies for better text processing
+nltk>=3.7
+spacy>=3.4.0

@@ -1,0 +1,225 @@
+PLAIN TEXT VERSION
+==================
+
+=== PAGE 1 ===
+THE IMPOSSIBLE ARCHIVE: A FIELD GUIDE
+Author: J. Morgan, Keeper of Keys and Counter of Clicks
+Edition: Zero (Unreviewed, Unreliable, Unreasonably Long)
+
+SECTION: FRONT MATTER
+- Purpose: To test document chunking while remaining at least mildly entertaining.
+- Audience: Parsers, chunkers, splitters, tokenizers, and the curious.
+- License: Public Domain of Nonsense (PDN).
+
+KEY FEATURES
+- Consistent headings and subheadings
+- Lists, callouts, pseudo-tables, and code-ish blocks
+- Repeated motifs for chunk boundary testing
+
+=== PAGE 2 ===
+TABLE OF CONTENTS (ABRIDGED)
+PART I — ORIENTATION
+  1. Welcome to the Archive
+  2. How to Get Lost Efficiently
+PART II — ROOMS AND REGIONS
+  3. The Vestibule of Rumors
+  4. The Hall of Nearly True Maps
+  5. The Scriptorium of Mutable Ink
+PART III — CREATURES AND CUSTODIANS
+  6. Librarians, Apparitions, and You
+  7. Index Fauna and Bookmark Flora
+PART IV — METHODS AND MEASURES
+  8. Cataloging the Uncatalogable
+  9. Chunking, Sharding, Paging
+PART V — APPENDICES
+  A. Glossary of Hard-to-Search Terms
+  B. Sample Indices and Faux References
+  C. Maintenance Log (Excerpts)
+
+Legend of Symbols:
+[!] important  [*] curious  [~] unverified
+
+=== PAGE 3 ===
+PART I — ORIENTATION
+1. WELCOME TO THE ARCHIVE
+The Impossible Archive is a building that appears wherever someone misplaces a crucial document. Doors have the temperament of cats and the hours of operation of a thunderstorm. Floors are numbered by prime emotions, and staircases insist on their own agendas.
+
+1.1 WHAT THIS GUIDE COVERS
+- Topology (changeable)
+- Etiquette (enforced by whispers)
+- Safety (mostly narrative)
+
+1.2 WHAT THIS GUIDE IGNORES
+- Reason
+- Indoor weather predictions
+- Warranty
+
+CALL-AND-RESPONSE
+Q: “Is this the right room?”  
+A: “Yes, but for the wrong reasons.”
+
+=== PAGE 4 ===
+2. HOW TO GET LOST EFFICIENTLY
+2.1 PREPARATION
+- Bring a pencil that refuses to write lies.
+- Wear shoes that remember the way back.
+- Memorize the phrase: “I decline to be foreshadowed.”
+
+2.2 TECHNIQUES
+A. Corridor Drift: Walk while thinking of a book you’ve never read.
+B. Anchor Skip: Fix your gaze on a stable object, then blink twice; it will no longer be there.
+C. Polite Inquiry: Ask a shelf for directions; accept its bibliography instead.
+
+2.3 TROUBLESHOOTING
+Problem: You’ve arrived where you started.  
+Cause: You were the destination all along.  
+Fix: Choose to start somewhere else.
+
+=== PAGE 5 ===
+PART II — ROOMS AND REGIONS
+3. THE VESTIBULE OF RUMORS
+Description: A lobby that repeats everything you say later, but out of context.
+
+Subsections
+3.1 Acoustics of Misquotation  
+3.2 Doors that Lead to Opinions  
+3.3 Ticketing, Tokens, Tones
+
+Pseudo-Table: Door Types
++-----------+--------------------------+----------+
+| Label     | Behavior                 | Priority |
++-----------+--------------------------+----------+
+| MAYBE     | Opens on subjunctives    |   Low    |
+| CERTAIN   | Locks when asked “sure?” |   High   |
+| SIDEWAYS  | Becomes a window         | Medium   |
++-----------+--------------------------+----------+
+
+=== PAGE 6 ===
+4. THE HALL OF NEARLY TRUE MAPS
+4.1 CARTOGRAPHIC ETHICS
+A map must be honest about its lies. Margins confess, legends repent.
+
+4.2 COMMON PROJECTIONS
+- Optimist’s Projection: All roads lead forward.
+- Archivist’s Projection: All roads lead inward.
+- Tourist’s Projection: All roads lead to snacks.
+
+4.3 PATHFINDING ALGORITHM (PSEUDO-CODE)
+```
+INPUT: desire d, patience p, corridor graph G
+WHILE not at_goal:
+  step <- choose_edge(G, heuristic=d+p/whispers)
+  follow(step)
+  IF wall_is_a_suggestion(): continue
+RETURN probably_here()
+```
+
+=== PAGE 7 ===
+5. THE SCRIPTORIUM OF MUTABLE INK
+5.1 SAFETY NOTICE [!]
+- Writing here modifies what was already written elsewhere.
+- Avoid passive voice; the verbs get jealous and rearrange paragraphs.
+
+5.2 TOOLS
+- Quills that annotate your intentions.
+- Ink that dries into memory rather than pigment.
+
+5.3 FAILURE MODES
+- Palimpsest Loop: Old text respawns under new text.
+- Margin Migration: Notes walk to more interesting pages.
+
+=== PAGE 8 ===
+PART III — CREATURES AND CUSTODIANS
+6. LIBRARIANS, APPARITIONS, AND YOU
+6.1 THE THREE ORDERS
+- Reference: Answers questions you were afraid to ask.
+- Circulation: Ensures stories leave and return improved.
+- Preservation: Fights entropy with calm labeling.
+
+6.2 APPARITIONS
+Appear as footnotes hovering above shoulder height. They can be cited but not hugged.
+
+6.3 VISITOR ETIQUETTE
+- Whisper in headlines; speak in footnotes.
+- Return plot twists to the front desk.
+
+=== PAGE 9 ===
+7. INDEX FAUNA AND BOOKMARK FLORA
+7.1 FIELD NOTES
+- Paperclips flock at dawn.
+- Sticky notes shed adhesive in late summer.
+
+7.2 IDENTIFICATION GUIDE
++-----------------+-----------------------+------------------+
+| Species         | Habitat               | Behavior         |
++-----------------+-----------------------+------------------+
+| Index Moth     | Back matter           | Eats page edges  |
+| Bookmark Vine  | Chapter breaks        | Climbs themes    |
+| Margin Lichen  | Scholarly editions    | Spreads slowly   |
++-----------------+-----------------------+------------------+
+
+7.3 CONTROL METHODS
+- Humane traps baited with errata.
+- Seasonal pruning of footnotes.
+
+=== PAGE 10 ===
+PART IV — METHODS AND MEASURES
+8. CATALOGING THE UNCATALOGABLE
+8.1 SCHEMAS
+- Dewey-Adjacent (DA): Numbers that refuse to be integers.
+- Free-Radical Taxonomy (FRT): Subjects sort themselves while you nap.
+
+8.2 METADATA FIELDS
+Title-of-What-It-Thinks-It-Is  
+Author-of-Who-Was-Here-First  
+Mood (Cloudy with Clear Moments)  
+Checksum (Emotional)
+
+8.3 SAMPLE RECORD
+Title: “On the Proper Folding of Directions”  
+Author: Anonymous Corridor  
+Mood: Resolute  
+Subjects: Navigation—Philosophy, Stairs—Opinions  
+Notes: Will attempt escape when unobserved.
+
+=== PAGE 11 ===
+9. CHUNKING, SHARDING, PAGING
+9.1 WHY CHUNK?
+- Improves retrieval.
+- Respects breath and cadence.
+
+9.2 HOW TO CHUNK THIS VERY GUIDE
+- Primary boundary: “=== PAGE X ===”
+- Secondary boundary: Headings in ALL CAPS or Title Case
+- Tertiary boundary: Lists, tables, and code blocks
+
+9.3 HEURISTICS
+- Keep semantic units together (paragraph + list).
+- Allow overlap at section transitions.
+- Insert anchors: “FIELD NOTE: …”, “TROUBLESHOOTING: …”
+
+9.4 EXAMPLE OFFSETS (SYMBOLIC)
+[0–800): Front Matter  
+[800–1600): Orientation  
+[1600–2400): Rooms & Regions  
+[2400–3200): Creatures & Custodians  
+[3200–4000): Methods & Measures  
+[4000–END): Appendices
+
+=== PAGE 12 ===
+PART V — APPENDICES
+A. GLOSSARY
+- Anchor Skip: Willful misplacement of certainty.  
+- Corridor Drift: Navigation via attention leakage.  
+- Margin Migration: Footnotes on walkabout.
+
+B. SAMPLE INDICES
+Names: Apparitio; Corridor (Anonymous); Vine (Bookmark)  
+Subjects: Maps—Ethics; Ink—Mutable; Chunking—Heuristics
+
+C. MAINTENANCE LOG (EXCERPTS)
+[04:12] Re-labeled a staircase from “Up” to “Again.”  
+[09:47] Fed the index moths with redundant adjectives.  
+[17:03] Returned a runaway preface to its book.
+
+END OF TEXT — RETURN YOUR PLOT TWISTS AT THE DESK

@@ -1,24 +1,25 @@
-# BookSearch - RAG Demo Project
+# Hybrid RAG - Advanced Retrieval System
 
-A collection of Retrieval-Augmented Generation (RAG) implementations demonstrating different approaches to semantic search and question-answering over document collections.
+A Retrieval-Augmented Generation (RAG) implementation combining BM25 keyword search with semantic vector search using Reciprocal Rank Fusion (RRF).
 
 ## Overview
 
-This project contains three progressive implementations of RAG systems:
+This project implements a **hybrid search RAG system** that provides superior retrieval quality by combining:
+- **BM25** for keyword-based matching
+- **Vector Search** for semantic similarity
+- **Reciprocal Rank Fusion** to merge results optimally
 
-1. **app_v1.py** - Basic RAG demo with in-memory documents
-2. **app_v2.py** - File-based RAG with ingestion pipeline
-3. **hybrid_rag.py** - Hybrid search combining BM25 and semantic vector search
-
-All implementations use **Ollama** for LLM inference and embeddings, with **ChromaDB** as the vector store.
+Uses **Ollama** for LLM inference and embeddings, with **ChromaDB** as the vector store.
 
 ## Features
 
-- 🔍 **Semantic Search**: Vector-based similarity search using embeddings
-- 📊 **Hybrid Search**: Combines BM25 keyword matching with semantic search via Reciprocal Rank Fusion (RRF)
-- 📚 **Document Ingestion**: Automatic chunking and indexing of `.txt` and `.md` files
-- 💬 **Conversational Q&A**: Ask questions about ingested documents with source citations
-- 🎯 **Grounded Responses**: Answers are constrained to the provided context
+- 🔍 **Hybrid Search**: Combines BM25 keyword matching with semantic vector search via RRF
+- 📚 **Smart Chunking**: Paragraph-aware text splitting with configurable overlap
+- 📄 **Multi-Format**: Supports `.txt` and `.md` files
+- 💬 **Q&A with Citations**: Source-grounded answers with chunk references
+- 🎯 **Deterministic IDs**: SHA1-based chunk identifiers for reproducibility
+- ⚡ **Batch Processing**: Efficient ingestion with progress tracking
+- 🛡️ **Duplicate Handling**: Graceful handling of re-ingestion
 
 ## Requirements
 
@@ -45,53 +46,28 @@ ollama pull nomic-embed-text
 
 ## Usage
 
-### Version 1: Basic Demo (`app_v1.py`)
-
-Minimal RAG example with a single in-memory document.
+### Quick Start
 
 ```bash
 # Check environment setup
-uv run app_v1.py init
+uv run hybrid_rag.py init
 
-# Run demo with sample document
-uv run app_v1.py demo
-```
-
-### Version 2: File-Based RAG (`app_v2.py`)
-
-Ingest and query local text files.
-
-```bash
-# Check environment
-uv run app_v2.py init
-
-# Ingest documents from a directory (default: ./data)
-uv run app_v2.py ingest --dir ./books
-
-# Ask questions
-uv run app_v2.py ask "What is the SLO target?"
-
-# Query with custom top-k
-uv run app_v2.py ask "Who is Sherlock Holmes?" --k 10
-
-# Check statistics
-uv run app_v2.py stats
-
-# Reset the index
-uv run app_v2.py reset
-```
-
-### Version 3: Hybrid RAG (`hybrid_rag.py`)
-
-Advanced implementation combining BM25 and vector search.
-
-```bash
-# Ingest documents
+# Ingest documents from a directory
 uv run hybrid_rag.py ingest --dir ./books
 
 # Ask questions with hybrid search
 uv run hybrid_rag.py ask --query "What happened to Frankenstein?"
 
+# Check index statistics
+uv run hybrid_rag.py stats
+
+# Reset both indices
+uv run hybrid_rag.py reset
+```
+
+### Advanced Usage
+
+```bash
 # Customize search parameters
 uv run hybrid_rag.py ask \
   --query "Your question here" \
@@ -99,18 +75,20 @@ uv run hybrid_rag.py ask \
   --embed-model nomic-embed-text \
   --k-each 6 \
   --final-k 5
+
+# Use different embedding model
+uv run hybrid_rag.py ingest --dir ./books --embed-model mxbai-embed-large
 ```
 
 ## Project Structure
 
 ```
-BookSearch/
-├── app_v1.py           # Basic RAG demo
-├── app_v2.py           # File-based RAG with ingestion
-├── hybrid_rag.py       # Hybrid BM25 + vector search
-├── requirements.txt    # Python dependencies
+Fundamentals-of-RAG/
+├── hybrid_rag.py       # Main hybrid RAG implementation
+├── pyproject.toml      # Project dependencies (uv)
+├── uv.lock             # Locked dependencies
 ├── books/              # Sample document collection
-├── data/               # Default ingestion directory
+├── data/               # Alternative ingestion directory
 ├── backup/             # Additional sample documents
 ├── index/              # BM25 index storage (created on ingest)
 └── .chroma/            # ChromaDB vector store (created on ingest)
@@ -120,42 +98,57 @@ BookSearch/
 
 ### Chunking Strategy
 
-- **app_v2.py**: Paragraph-based chunking with configurable overlap (default: 800 chars, 150 char overlap)
-- **hybrid_rag.py**: Fixed-size chunking with overlap (default: 1024 chars, 200 char overlap)
+Paragraph-aware text splitting with configurable overlap:
+- Default: 800 characters per chunk
+- 150 character overlap between chunks
+- Preserves paragraph boundaries for better semantic coherence
+- Uses deterministic SHA1-based IDs for reproducibility
 
-### Retrieval Methods
+### Retrieval Pipeline
 
-1. **Semantic Search** (v1, v2): Uses cosine similarity between query and document embeddings
-2. **Hybrid Search** (v3): 
-   - BM25 performs keyword-based retrieval
-   - Vector search performs semantic retrieval
-   - Results merged using Reciprocal Rank Fusion (RRF)
+1. **Dual Retrieval**:
+   - **BM25**: Keyword-based ranking using tokenized text
+   - **Vector Search**: Cosine similarity on embeddings
 
-### Answer Generation
+2. **Reciprocal Rank Fusion (RRF)**:
+   - Merges results from both retrievers
+   - Default: top-6 from each → fused to final top-5
+   - Formula: `score = Σ 1/(k + rank)` where k=60
 
-All versions use a grounded prompting strategy:
-- Retrieve relevant document chunks
-- Build context from top-k results
-- Prompt LLM to answer using ONLY the provided context
-- Include source citations
+3. **Answer Generation**:
+   - Build context from fused chunks
+   - Prompt LLM with grounded instructions
+   - Include source citations in output
 
 ## Configuration
 
-Key parameters you can modify:
+Key parameters in `hybrid_rag.py`:
 
 - `LLM_MODEL`: Language model for generation (default: `llama3.2:3b`)
 - `EMBED_MODEL`: Embedding model (default: `nomic-embed-text`)
-- `TOP_K`: Number of chunks to retrieve (default: 5)
-- `CHROMA_PATH`: ChromaDB storage location (default: `./.chroma`)
-- `COLLECTION_NAME`: ChromaDB collection name
+- `CHROMA_DIR`: Vector store location (default: `./.chroma`)
+- `INDEX_DIR`: BM25 index location (default: `./index`)
+- `COLLECTION_NAME`: ChromaDB collection name (default: `books`)
+
+### Chunking Parameters
+
+In `make_chunks()`:
+- `max_chars=800`: Maximum characters per chunk
+- `overlap=150`: Character overlap between chunks
+
+### Retrieval Parameters
+
+Via CLI:
+- `--k-each`: Top-k from each retriever (default: 6)
+- `--final-k`: Final top-k after RRF fusion (default: 5)
 
 ## Tips
 
-- Start with `app_v1.py` to verify your setup
-- Use `app_v2.py` for straightforward document Q&A
-- Use `hybrid_rag.py` when you need both keyword and semantic matching
-- Adjust chunk size and overlap based on your document structure
-- Tune `k_each` and `final_k` in hybrid search for optimal retrieval
+- Run `init` first to verify your Ollama setup
+- Use `stats` to monitor index sizes
+- Adjust `max_chars` based on your document structure (smaller for dense content)
+- Increase `k_each` if relevant results are being missed
+- The hybrid approach excels when queries contain both specific terms and concepts
 
 ## Development
 
@@ -189,6 +182,16 @@ The `books/` directory contains classic literature texts for testing:
 
 Additional samples in `backup/` include DevOps runbooks and SLO documents.
 
+## Commands Reference
+
+| Command | Description |
+|---------|-------------|
+| `init` | Check Ollama, Chroma, and BM25 setup |
+| `ingest --dir <path>` | Index .txt/.md files from directory |
+| `ask --query "<q>"` | Query with hybrid search |
+| `stats` | Show chunk counts for both indices |
+| `reset` | Delete Chroma and BM25 indices |
+
 ## Troubleshooting
 
 **Issue**: "Ollama not responding"
@@ -196,12 +199,17 @@ Additional samples in `backup/` include DevOps runbooks and SLO documents.
 - Verify models are downloaded: `ollama list`
 
 **Issue**: "No results found"
-- Run ingest command first to index documents
-- Check that documents exist in the specified directory
+- Run `ingest` command first to index documents
+- Check that `.txt` or `.md` files exist in the specified directory
+- Verify indices with `stats`
 
-**Issue**: ChromaDB errors
-- Try resetting: `uv run app_v2.py reset`
-- Delete `.chroma` directory manually if needed
+**Issue**: ChromaDB or BM25 errors
+- Try resetting: `uv run hybrid_rag.py reset`
+- Delete `.chroma` and `index/` directories manually if needed
+
+**Issue**: "FileNotFoundError" for BM25 index
+- Run `ingest` before `ask`
+- The BM25 index is created during ingestion
 
 ## License
 

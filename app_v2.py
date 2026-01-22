@@ -10,7 +10,7 @@ import ollama
 
 CHROMA_PATH = Path("./.chroma")
 COLLECTION_NAME = "hello_rag"   # keep same as v1 so the index persists
-LLM_MODEL = "llama3.3:latest"
+LLM_MODEL = "llama3.2:3b"
 EMBED_MODEL = "nomic-embed-text"
 TOP_K = 5   
 
@@ -211,4 +211,3 @@ if __name__ == "__main__":
     except KeyboardInterrupt:
         print("\nInterrupted.")
         sys.exit(1)
-    

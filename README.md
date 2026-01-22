@@ -22,22 +22,24 @@ All implementations use **Ollama** for LLM inference and embeddings, with **Chro
 
 ## Requirements
 
-- Python 3.8+
+- [uv](https://docs.astral.sh/uv/) package manager
 - Ollama running locally
 - Required models:
-  - `llama3.3:latest` (or compatible LLM)
+  - `llama3.2:3b` (or compatible LLM)
   - `nomic-embed-text` (for embeddings)
 
 ## Installation
 
 1. Install dependencies:
 ```bash
-pip install -r requirements.txt
+uv sync
 ```
+
+This will create a virtual environment and install all dependencies from `uv.lock`.
 
 2. Ensure Ollama is running with required models:
 ```bash
-ollama pull llama3.3:latest
+ollama pull llama3.2:3b
 ollama pull nomic-embed-text
 ```
 
@@ -49,10 +51,10 @@ Minimal RAG example with a single in-memory document.
 
 ```bash
 # Check environment setup
-python app_v1.py init
+uv run app_v1.py init
 
 # Run demo with sample document
-python app_v1.py demo
+uv run app_v1.py demo
 ```
 
 ### Version 2: File-Based RAG (`app_v2.py`)
@@ -61,22 +63,22 @@ Ingest and query local text files.
 
 ```bash
 # Check environment
-python app_v2.py init
+uv run app_v2.py init
 
 # Ingest documents from a directory (default: ./data)
-python app_v2.py ingest --dir ./books
+uv run app_v2.py ingest --dir ./books
 
 # Ask questions
-python app_v2.py ask "What is the SLO target?"
+uv run app_v2.py ask "What is the SLO target?"
 
 # Query with custom top-k
-python app_v2.py ask "Who is Sherlock Holmes?" --k 10
+uv run app_v2.py ask "Who is Sherlock Holmes?" --k 10
 
 # Check statistics
-python app_v2.py stats
+uv run app_v2.py stats
 
 # Reset the index
-python app_v2.py reset
+uv run app_v2.py reset
 ```
 
 ### Version 3: Hybrid RAG (`hybrid_rag.py`)
@@ -85,15 +87,15 @@ Advanced implementation combining BM25 and vector search.
 
 ```bash
 # Ingest documents
-python hybrid_rag.py ingest --dir ./books
+uv run hybrid_rag.py ingest --dir ./books
 
 # Ask questions with hybrid search
-python hybrid_rag.py ask --query "What happened to Frankenstein?"
+uv run hybrid_rag.py ask --query "What happened to Frankenstein?"
 
 # Customize search parameters
-python hybrid_rag.py ask \
+uv run hybrid_rag.py ask \
   --query "Your question here" \
-  --llm llama3.3:latest \
+  --llm llama3.2:3b \
   --embed-model nomic-embed-text \
   --k-each 6 \
   --final-k 5
@@ -141,7 +143,7 @@ All versions use a grounded prompting strategy:
 
 Key parameters you can modify:
 
-- `LLM_MODEL`: Language model for generation (default: `llama3.3:latest`)
+- `LLM_MODEL`: Language model for generation (default: `llama3.2:3b`)
 - `EMBED_MODEL`: Embedding model (default: `nomic-embed-text`)
 - `TOP_K`: Number of chunks to retrieve (default: 5)
 - `CHROMA_PATH`: ChromaDB storage location (default: `./.chroma`)
@@ -154,6 +156,29 @@ Key parameters you can modify:
 - Use `hybrid_rag.py` when you need both keyword and semantic matching
 - Adjust chunk size and overlap based on your document structure
 - Tune `k_each` and `final_k` in hybrid search for optimal retrieval
+
+## Development
+
+### Adding New Dependencies
+
+```bash
+uv add <package-name>
+```
+
+### Updating Dependencies
+
+```bash
+uv lock --upgrade
+uv sync
+```
+
+### Exporting to requirements.txt
+
+If you need a `requirements.txt` for compatibility:
+
+```bash
+uv export --format requirements-txt > requirements.txt
+```
 
 ## Sample Documents
 
@@ -175,7 +200,7 @@ Additional samples in `backup/` include DevOps runbooks and SLO documents.
 - Check that documents exist in the specified directory
 
 **Issue**: ChromaDB errors
-- Try resetting: `python app_v2.py reset`
+- Try resetting: `uv run app_v2.py reset`
 - Delete `.chroma` directory manually if needed
 
 ## License

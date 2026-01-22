@@ -112,7 +112,7 @@ def _load_bm25() -> Tuple[BM25Okapi, List[str]]:
     return bm25, ids
 
 def ask(query: str,
-        llm_model: str = "llama3.3:latest",
+        llm_model: str = "llama3.2:3b",
         embedding_model: str = "nomic-embed-text",
         k_each: int = 6,
         final_k: int = 5):
@@ -178,7 +178,7 @@ if __name__ == "__main__":
 
     p_ask = sp.add_parser("ask")
     p_ask.add_argument("--query", required=True)
-    p_ask.add_argument("--llm", default="llama3.3:latest")
+    p_ask.add_argument("--llm", default="llama3.2:3b")
     p_ask.add_argument("--embed-model", default="nomic-embed-text")
     p_ask.add_argument("--k-each", type=int, default=6)
     p_ask.add_argument("--final-k", type=int, default=5)

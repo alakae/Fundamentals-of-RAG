@@ -8,7 +8,7 @@ import ollama
 
 CHROMA_PATH = Path("./.chroma")
 COLLECTION_NAME = "hello_rag"
-LLM_MODEL = "llama3.3:latest"
+LLM_MODEL = "llama3.2:3b"
 EMBED_MODEL = "nomic-embed-text"
 
 def _embed(text: str) -> list[float]:

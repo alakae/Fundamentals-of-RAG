@@ -245,7 +245,8 @@ def ask(query: str,
         llm_model: str = "llama3.2:3b",
         embedding_model: str = "nomic-embed-text",
         k_each: int = 6,
-        final_k: int = 5):
+        final_k: int = 5,
+        verbose: bool = False):
 
     # BM25 side
     bm25, bm25_ids = _load_bm25()
@@ -283,6 +284,13 @@ def ask(query: str,
     )
     user = f"Context:\n\n{context}\n\nQuestion: {query}"
 
+    if verbose:
+        print("\n=== System Prompt ===\n")
+        print(system)
+        print("\n=== User Prompt ===\n")
+        print(user)
+        print("\n" + "=" * 50 + "\n")
+
     resp = ollama.chat(
         model=llm_model,
         messages=[{"role": "system", "content": system}, {"role": "user", "content": user}],
@@ -314,6 +322,7 @@ if __name__ == "__main__":
     p_ask.add_argument("--embed-model", default=EMBED_MODEL, help="Embedding model name")
     p_ask.add_argument("--k-each", type=int, default=6, help="Top-k from each retriever")
     p_ask.add_argument("--final-k", type=int, default=5, help="Final top-k after fusion")
+    p_ask.add_argument("--verbose", action="store_true", help="Show complete prompt given to LLM")
 
     sp.add_parser("stats", help="Show number of chunks in both indices")
     sp.add_parser("reset", help="Delete Chroma and BM25 indices")
@@ -327,7 +336,7 @@ if __name__ == "__main__":
             ingest(args.dir, embedding_model=args.embed_model)
         elif args.cmd == "ask":
             ask(args.query, llm_model=args.llm, embedding_model=args.embed_model,
-                k_each=args.k_each, final_k=args.final_k)
+                k_each=args.k_each, final_k=args.final_k, verbose=args.verbose)
         elif args.cmd == "stats":
             cmd_stats()
         elif args.cmd == "reset":

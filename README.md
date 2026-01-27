@@ -76,6 +76,11 @@ uv run hybrid_rag.py ask \
   --k-each 6 \
   --final-k 5
 
+# Show the complete prompt sent to the LLM (system and user)
+uv run hybrid_rag.py ask \
+  --query "Your question here" \
+  --verbose
+
 # Use different embedding model
 uv run hybrid_rag.py ingest --dir ./books --embed-model mxbai-embed-large
 ```
@@ -141,6 +146,7 @@ In `make_chunks()`:
 Via CLI:
 - `--k-each`: Top-k from each retriever (default: 6)
 - `--final-k`: Final top-k after RRF fusion (default: 5)
+- `--verbose`: Show complete prompt given to LLM (both system and user prompts)
 
 ## Tips
 

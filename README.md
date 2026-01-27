@@ -2,6 +2,22 @@
 
 A Retrieval-Augmented Generation (RAG) implementation combining BM25 keyword search with semantic vector search using Reciprocal Rank Fusion (RRF).
 
+> [!IMPORTANT]
+> ## Project notes (differences vs upstream)
+> This repository is a **modified** version of the upstream course/demo material. Key differences introduced in commits `cf7e2ecc`, `3aea9360`, and `0468ea70`:
+>
+> - **Single “full” demo only**: the earlier incremental versions were removed (e.g., `app_v1.py`, `app_v2.py`) and the project is now centered around **`hybrid_rag.py`** as the main entry point.
+> - **Hybrid RAG focus**: documentation and usage were updated to emphasize the **hybrid retrieval pipeline** (BM25 + vector search + Reciprocal Rank Fusion), with expanded CLI guidance (init/ingest/ask/stats/reset) and updated project structure.
+> - **Dependency management migrated to `uv`**: added `pyproject.toml` and `uv.lock`, updated install/run instructions to use `uv sync` and `uv run ...`, and updated defaults (e.g., the example LLM model).
+> - **Ignore local DB artifacts**: `.gitignore` was updated to avoid committing local persistence artifacts (e.g., `chroma.sqlite3`).
+>
+> ## License / educational use notice
+> This codebase was originally provided by **KodeKloud** and is **licensed for educational purposes only**.  
+> That educational-only licensing **still applies** to this repository and any modifications contained here.
+>
+> **Disclaimer:** No copyright infringement intended.
+
+
 ## Overview
 
 This project implements a **hybrid search RAG system** that provides superior retrieval quality by combining:

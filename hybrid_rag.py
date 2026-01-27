@@ -10,6 +10,7 @@ from typing import List, Dict, Tuple, Iterator
 from tqdm import tqdm
 import chromadb
 from rank_bm25 import BM25Okapi
+from sentence_transformers import CrossEncoder
 import ollama
 
 
@@ -80,6 +81,36 @@ def rrf_merge(list_a: List[str], list_b: List[str], k: int = 60, topn: int = 5) 
         for rank, _id in enumerate(lst):
             scores[_id] += 1.0 / (k + rank + 1)
     return [x for x, _ in sorted(scores.items(), key=lambda kv: kv[1], reverse=True)][:topn]
+
+
+def neural_rerank(query: str, candidates: List[Tuple[str, str]], model: CrossEncoder, final_k: int = 5) -> List[str]:
+    """
+    Neural reranking using Cross-Encoder.
+
+    Args:
+        query: The search query
+        candidates: List of (doc_id, doc_text) tuples
+        model: Loaded CrossEncoder model
+        final_k: Number of top results to return
+
+    Returns:
+        List of doc_ids sorted by neural relevance scores
+    """
+    if not candidates:
+        return []
+
+    # Create query-document pairs for scoring
+    pairs = [[query, doc_text] for _, doc_text in candidates]
+
+    # Predict relevance scores (higher = more relevant)
+    scores = model.predict(pairs)
+
+    # Combine IDs with scores and sort by score (descending)
+    scored_candidates = [(doc_id, score) for (doc_id, _), score in zip(candidates, scores)]
+    scored_candidates.sort(key=lambda x: x[1], reverse=True)
+
+    # Return top final_k IDs
+    return [doc_id for doc_id, _ in scored_candidates[:final_k]]
 
 
 INDEX_DIR = Path("index")
@@ -162,7 +193,7 @@ def ingest(dir_path: str, embedding_model: str = "nomic-embed-text"):
         pickle.dump(bm25_ids, f)
 
     print(f"[ingest] Done. {added}/{len(all_ids)} chunks stored.")
-    
+
 def _embed(text: str) -> list[float]:
     """Support both prompt= and input= depending on client version."""
     try:
@@ -244,9 +275,11 @@ def _load_bm25() -> Tuple[BM25Okapi, List[str]]:
 def ask(query: str,
         llm_model: str = "llama3.2:3b",
         embedding_model: str = "nomic-embed-text",
+        cross_encoder_model: str = "cross-encoder/ms-marco-MiniLM-L-6-v2",
         k_each: int = 6,
         final_k: int = 5,
-        verbose: bool = False):
+        verbose: bool = False,
+        reranker: str = "rrf"):
 
     # BM25 side
     bm25, bm25_ids = _load_bm25()
@@ -262,8 +295,21 @@ def ask(query: str,
     vec = collection.query(query_embeddings=[q_emb], n_results=k_each)
     vec_ids = [doc_id for doc_id in vec["ids"][0]]
 
-    # Merge via RRF
-    fused_ids = rrf_merge(bm25_top_ids, vec_ids, topn=final_k)
+    # Merge/Rerank based on selected method
+    if reranker == "neural":
+        # Combine unique candidates from both retrievers
+        all_candidate_ids = list(dict.fromkeys(bm25_top_ids + vec_ids))
+
+        # Fetch documents for neural reranking
+        candidates_data = collection.get(ids=all_candidate_ids)
+        candidates = [(doc_id, doc_text) for doc_id, doc_text in zip(candidates_data["ids"], candidates_data["documents"])]
+
+        # Load Cross-Encoder model and perform neural reranking
+        cross_encoder = CrossEncoder(cross_encoder_model)
+        fused_ids = neural_rerank(query, candidates, cross_encoder, final_k)
+    else:
+        # Default: RRF merge
+        fused_ids = rrf_merge(bm25_top_ids, vec_ids, topn=final_k)
 
     # Fetch fused docs for context
     got = collection.get(ids=fused_ids)
@@ -305,9 +351,9 @@ def ask(query: str,
     for _id in fused_ids:
         m = id_to_meta[_id]
         print(f"{Path(m['source']).name}  (chunk {m['chunk']})")
-        
+
 if __name__ == "__main__":
-    p = argparse.ArgumentParser(description="Hybrid RAG: BM25 + Vector Search with Reciprocal Rank Fusion")
+    p = argparse.ArgumentParser(description="Hybrid RAG: BM25 + Vector Search with RRF or Neural Cross-Encoder Reranking")
     sp = p.add_subparsers(dest="cmd", required=True)
 
     sp.add_parser("init", help="Quick environment check (Ollama + Chroma + BM25)")
@@ -322,6 +368,10 @@ if __name__ == "__main__":
     p_ask.add_argument("--embed-model", default=EMBED_MODEL, help="Embedding model name")
     p_ask.add_argument("--k-each", type=int, default=6, help="Top-k from each retriever")
     p_ask.add_argument("--final-k", type=int, default=5, help="Final top-k after fusion")
+    p_ask.add_argument("--reranker", choices=["rrf", "neural"], default="rrf",
+                       help="Reranking method: 'rrf' (mathematical, fast) or 'neural' (Cross-Encoder, more accurate)")
+    p_ask.add_argument("--cross-encoder-model", default="cross-encoder/ms-marco-MiniLM-L-6-v2",
+                       help="Cross-encoder model for neural reranking")
     p_ask.add_argument("--verbose", action="store_true", help="Show complete prompt given to LLM")
 
     sp.add_parser("stats", help="Show number of chunks in both indices")
@@ -336,7 +386,9 @@ if __name__ == "__main__":
             ingest(args.dir, embedding_model=args.embed_model)
         elif args.cmd == "ask":
             ask(args.query, llm_model=args.llm, embedding_model=args.embed_model,
-                k_each=args.k_each, final_k=args.final_k, verbose=args.verbose)
+                cross_encoder_model=args.cross_encoder_model,
+                k_each=args.k_each, final_k=args.final_k, verbose=args.verbose,
+                reranker=args.reranker)
         elif args.cmd == "stats":
             cmd_stats()
         elif args.cmd == "reset":

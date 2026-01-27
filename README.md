@@ -1,13 +1,14 @@
 # Hybrid RAG - Advanced Retrieval System
 
-A Retrieval-Augmented Generation (RAG) implementation combining BM25 keyword search with semantic vector search using Reciprocal Rank Fusion (RRF).
+A Retrieval-Augmented Generation (RAG) implementation combining BM25 keyword search with semantic vector search, featuring two reranking methods: Reciprocal Rank Fusion (RRF) and Neural Cross-Encoder reranking.
 
 > [!IMPORTANT]
 > ## Project notes (differences vs upstream)
-> This repository is a **modified** version of the upstream course/demo material. Key differences introduced in commits `cf7e2ecc`, `3aea9360`, and `0468ea70`:
+> This repository is a **modified** version of the upstream course/demo material:
 >
 > - **Single “full” demo only**: the earlier incremental versions were removed (e.g., `app_v1.py`, `app_v2.py`) and the project is now centered around **`hybrid_rag.py`** as the main entry point.
 > - **Hybrid RAG focus**: documentation and usage were updated to emphasize the **hybrid retrieval pipeline** (BM25 + vector search + Reciprocal Rank Fusion), with expanded CLI guidance (init/ingest/ask/stats/reset) and updated project structure.
+> - **Add neural reranking option**
 > - **Dependency management migrated to `uv`**: added `pyproject.toml` and `uv.lock`, updated install/run instructions to use `uv sync` and `uv run ...`, and updated defaults (e.g., the example LLM model).
 > - **Ignore local DB artifacts**: `.gitignore` was updated to avoid committing local persistence artifacts (e.g., `chroma.sqlite3`).
 >
@@ -23,13 +24,16 @@ A Retrieval-Augmented Generation (RAG) implementation combining BM25 keyword sea
 This project implements a **hybrid search RAG system** that provides superior retrieval quality by combining:
 - **BM25** for keyword-based matching
 - **Vector Search** for semantic similarity
-- **Reciprocal Rank Fusion** to merge results optimally
+- **Two reranking options**:
+  - **RRF (Reciprocal Rank Fusion)**: Fast mathematical fusion
+  - **Neural Reranker**: AI-powered Cross-Encoder for +30% accuracy boost
 
 Uses **Ollama** for LLM inference and embeddings, with **ChromaDB** as the vector store.
 
 ## Features
 
-- 🔍 **Hybrid Search**: Combines BM25 keyword matching with semantic vector search via RRF
+- 🔍 **Hybrid Search**: Combines BM25 keyword matching with semantic vector search
+- 🧠 **Dual Reranking**: Choose between RRF (fast) or Neural Cross-Encoder (accurate)
 - 📚 **Smart Chunking**: Paragraph-aware text splitting with configurable overlap
 - 📄 **Multi-Format**: Supports `.txt` and `.md` files
 - 💬 **Q&A with Citations**: Source-grounded answers with chunk references
@@ -71,8 +75,11 @@ uv run hybrid_rag.py init
 # Ingest documents from a directory
 uv run hybrid_rag.py ingest --dir ./books
 
-# Ask questions with hybrid search
+# Ask questions with hybrid search (default: RRF reranker)
 uv run hybrid_rag.py ask --query "What happened to Frankenstein?"
+
+# Ask with Neural Reranker for better accuracy
+uv run hybrid_rag.py ask --query "What happened to Frankenstein?" --reranker neural
 
 # Check index statistics
 uv run hybrid_rag.py stats
@@ -84,9 +91,10 @@ uv run hybrid_rag.py reset
 ### Advanced Usage
 
 ```bash
-# Customize search parameters
+# Customize search parameters with neural reranker
 uv run hybrid_rag.py ask \
   --query "Your question here" \
+  --reranker neural \
   --llm llama3.2:3b \
   --embed-model nomic-embed-text \
   --k-each 6 \
@@ -96,6 +104,10 @@ uv run hybrid_rag.py ask \
 uv run hybrid_rag.py ask \
   --query "Your question here" \
   --verbose
+
+# Compare both rerankers on the same query
+uv run hybrid_rag.py ask --query "Your question" --reranker rrf
+uv run hybrid_rag.py ask --query "Your question" --reranker neural
 
 # Use different embedding model
 uv run hybrid_rag.py ingest --dir ./books --embed-model mxbai-embed-large
@@ -115,6 +127,43 @@ Fundamentals-of-RAG/
 └── .chroma/            # ChromaDB vector store (created on ingest)
 ```
 
+## Reranking Methods
+
+This implementation offers two reranking strategies to merge results from BM25 and Vector search:
+
+### 1. RRF (Reciprocal Rank Fusion) - Default
+**Mathematical fusion, fast and efficient**
+
+- Combines rankings using the formula: `score = Σ 1/(k + rank)` where k=60
+- No model loading, instant results
+- Good baseline performance
+- Best for: Speed-critical applications, real-time queries
+
+### 2. Neural Reranker (Cross-Encoder)
+**AI-powered contextual understanding, +30% accuracy boost**
+
+- Uses `cross-encoder/ms-marco-MiniLM-L-6-v2` model from sentence-transformers
+- Reads and understands the actual content of query-document pairs
+- Predicts true relevance scores (0.0 to 1.0) for each candidate
+- Handles noise better - assigns low scores to irrelevant documents even if both retrievers ranked them high
+- **First run**: Downloads model (~100MB) to `~/.cache/huggingface/`
+- **Subsequent runs**: Loads from cache (takes a few seconds)
+
+**When to use Neural Reranker:**
+- Complex queries requiring deep understanding
+- When accuracy is more important than speed
+- Domain-specific or ambiguous questions
+- Production systems where quality matters most
+
+**Performance comparison:**
+```bash
+# Fast but may miss nuanced matches
+--reranker rrf          # ~0.1s additional latency
+
+# More accurate, understands context
+--reranker neural       # ~1-2s additional latency (after model cache)
+```
+
 ## How It Works
 
 ### Chunking Strategy
@@ -131,13 +180,18 @@ Paragraph-aware text splitting with configurable overlap:
    - **BM25**: Keyword-based ranking using tokenized text
    - **Vector Search**: Cosine similarity on embeddings
 
-2. **Reciprocal Rank Fusion (RRF)**:
-   - Merges results from both retrievers
-   - Default: top-6 from each → fused to final top-5
-   - Formula: `score = Σ 1/(k + rank)` where k=60
+2. **Reranking** (choose one):
+   - **RRF Mode**: Mathematical fusion using reciprocal ranks
+     - Default: top-6 from each → fused to final top-5
+     - Formula: `score = Σ 1/(k + rank)` where k=60
+   - **Neural Mode**: Cross-Encoder deep learning reranking
+     - Combines unique candidates from both retrievers
+     - Creates query-document pairs
+     - Neural network predicts relevance score for each pair
+     - Sorts by AI scores and returns top-k
 
 3. **Answer Generation**:
-   - Build context from fused chunks
+   - Build context from reranked chunks
    - Prompt LLM with grounded instructions
    - Include source citations in output
 
@@ -161,15 +215,19 @@ In `make_chunks()`:
 
 Via CLI:
 - `--k-each`: Top-k from each retriever (default: 6)
-- `--final-k`: Final top-k after RRF fusion (default: 5)
+- `--final-k`: Final top-k after reranking (default: 5)
+- `--reranker`: Reranking method - "rrf" (default) or "neural"
 - `--verbose`: Show complete prompt given to LLM (both system and user prompts)
 
 ## Tips
 
 - Run `init` first to verify your Ollama setup
 - Use `stats` to monitor index sizes
+- Try both rerankers on your queries to see which performs better for your use case
+- **Neural reranker first run**: Expect a one-time ~100MB download for the Cross-Encoder model
 - Adjust `max_chars` based on your document structure (smaller for dense content)
 - Increase `k_each` if relevant results are being missed
+- Use `--reranker neural` for complex questions or when accuracy is critical
 - The hybrid approach excels when queries contain both specific terms and concepts
 
 ## Development

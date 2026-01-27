@@ -83,7 +83,7 @@ def rrf_merge(list_a: List[str], list_b: List[str], k: int = 60, topn: int = 5) 
     return [x for x, _ in sorted(scores.items(), key=lambda kv: kv[1], reverse=True)][:topn]
 
 
-def neural_rerank(query: str, candidates: List[Tuple[str, str]], model: CrossEncoder, final_k: int = 5) -> List[str]:
+def neural_rerank(query: str, candidates: List[Tuple[str, str]], model: CrossEncoder, final_k: int = 5) -> Tuple[List[str], List[Tuple[str, float]]]:
     """
     Neural reranking using Cross-Encoder.
 
@@ -94,10 +94,10 @@ def neural_rerank(query: str, candidates: List[Tuple[str, str]], model: CrossEnc
         final_k: Number of top results to return
 
     Returns:
-        List of doc_ids sorted by neural relevance scores
+        Tuple of (list of doc_ids sorted by neural relevance scores, list of all (doc_id, score) tuples)
     """
     if not candidates:
-        return []
+        return [], []
 
     # Create query-document pairs for scoring
     pairs = [[query, doc_text] for _, doc_text in candidates]
@@ -106,11 +106,11 @@ def neural_rerank(query: str, candidates: List[Tuple[str, str]], model: CrossEnc
     scores = model.predict(pairs)
 
     # Combine IDs with scores and sort by score (descending)
-    scored_candidates = [(doc_id, score) for (doc_id, _), score in zip(candidates, scores)]
+    scored_candidates = [(doc_id, float(score)) for (doc_id, _), score in zip(candidates, scores)]
     scored_candidates.sort(key=lambda x: x[1], reverse=True)
 
-    # Return top final_k IDs
-    return [doc_id for doc_id, _ in scored_candidates[:final_k]]
+    # Return top final_k IDs and all scored candidates
+    return [doc_id for doc_id, _ in scored_candidates[:final_k]], scored_candidates
 
 
 INDEX_DIR = Path("index")
@@ -287,6 +287,7 @@ def ask(query: str,
     scores = bm25.get_scores(q_tokens)
     bm25_top_idx = list(reversed(sorted(range(len(scores)), key=lambda i: scores[i])))[:k_each]
     bm25_top_ids = [bm25_ids[i] for i in bm25_top_idx]
+    bm25_top_scores = [scores[i] for i in bm25_top_idx]
 
     # Vector side (Chroma)
     client = chromadb.PersistentClient(path=str(CHROMA_DIR))
@@ -294,11 +295,44 @@ def ask(query: str,
     q_emb = ollama.embeddings(model=embedding_model, prompt=query)["embedding"]
     vec = collection.query(query_embeddings=[q_emb], n_results=k_each)
     vec_ids = [doc_id for doc_id in vec["ids"][0]]
+    vec_distances = vec["distances"][0] if "distances" in vec else None
+
+    # Show initial retrieval results if verbose
+    if verbose:
+        # Fetch metadata for display
+        all_initial_ids = list(dict.fromkeys(bm25_top_ids + vec_ids))
+        initial_meta_data = collection.get(ids=all_initial_ids)
+        id_to_meta_verbose = dict(zip(initial_meta_data["ids"], initial_meta_data["metadatas"]))
+
+        print("\n=== Initial Retrieval Results ===\n")
+        print(f"BM25 Top {k_each} Results:")
+        for rank, (doc_id, score) in enumerate(zip(bm25_top_ids, bm25_top_scores), 1):
+            meta = id_to_meta_verbose.get(doc_id, {})
+            src = Path(meta.get("source", "unknown")).name
+            chunk_num = meta.get("chunk", "?")
+            print(f"  {rank}. {src} [chunk {chunk_num}] (score: {score:.4f})")
+
+        print(f"\nVector Search Top {k_each} Results:")
+        for rank, doc_id in enumerate(vec_ids, 1):
+            meta = id_to_meta_verbose.get(doc_id, {})
+            src = Path(meta.get("source", "unknown")).name
+            chunk_num = meta.get("chunk", "?")
+            dist_info = f" (distance: {vec_distances[rank-1]:.4f})" if vec_distances else ""
+            print(f"  {rank}. {src} [chunk {chunk_num}]{dist_info}")
+        print()
 
     # Merge/Rerank based on selected method
+    neural_scores = None
     if reranker == "neural":
         # Combine unique candidates from both retrievers
         all_candidate_ids = list(dict.fromkeys(bm25_top_ids + vec_ids))
+
+        if verbose:
+            print(f"=== Neural Reranking ===\n")
+            print(f"Combined candidate pool: {len(all_candidate_ids)} unique documents")
+            print(f"  - From BM25: {len([x for x in all_candidate_ids if x in bm25_top_ids])}")
+            print(f"  - From Vector: {len([x for x in all_candidate_ids if x in vec_ids])}")
+            print(f"  - Overlap: {len(set(bm25_top_ids) & set(vec_ids))}\n")
 
         # Fetch documents for neural reranking
         candidates_data = collection.get(ids=all_candidate_ids)
@@ -306,10 +340,69 @@ def ask(query: str,
 
         # Load Cross-Encoder model and perform neural reranking
         cross_encoder = CrossEncoder(cross_encoder_model)
-        fused_ids = neural_rerank(query, candidates, cross_encoder, final_k)
+        fused_ids, neural_scores = neural_rerank(query, candidates, cross_encoder, final_k)
+
+        if verbose:
+            print(f"Neural Reranking Results (Top {final_k}):")
+            for rank, (doc_id, score) in enumerate(neural_scores[:final_k], 1):
+                meta = id_to_meta_verbose.get(doc_id, {})
+                src = Path(meta.get("source", "unknown")).name
+                chunk_num = meta.get("chunk", "?")
+                print(f"  {rank}. {src} [chunk {chunk_num}] (score: {score:.4f})")
+            print()
     else:
         # Default: RRF merge
         fused_ids = rrf_merge(bm25_top_ids, vec_ids, topn=final_k)
+
+        if verbose:
+            # Fetch metadata for RRF results
+            rrf_meta_data = collection.get(ids=fused_ids)
+            id_to_meta_rrf = dict(zip(rrf_meta_data["ids"], rrf_meta_data["metadatas"]))
+
+            print(f"=== RRF Reranking ===\n")
+            print(f"Reciprocal Rank Fusion with k=60")
+            print(f"Final Top {final_k} Results:")
+            for rank, doc_id in enumerate(fused_ids, 1):
+                meta = id_to_meta_rrf.get(doc_id, {})
+                src = Path(meta.get("source", "unknown")).name
+                chunk_num = meta.get("chunk", "?")
+                print(f"  {rank}. {src} [chunk {chunk_num}]")
+            print()
+
+    # Show ranking impact if verbose
+    if verbose:
+        print("=== Ranking Impact ===\n")
+        # Create initial rank mappings
+        bm25_ranks = {doc_id: rank + 1 for rank, doc_id in enumerate(bm25_top_ids)}
+        vec_ranks = {doc_id: rank + 1 for rank, doc_id in enumerate(vec_ids)}
+
+        # Fetch metadata for impact display (reuse if already fetched for RRF)
+        if reranker == "rrf":
+            id_to_meta_impact = id_to_meta_rrf
+        else:
+            id_to_meta_impact = id_to_meta_verbose
+
+        for final_rank, doc_id in enumerate(fused_ids, 1):
+            bm25_rank = bm25_ranks.get(doc_id, None)
+            vec_rank = vec_ranks.get(doc_id, None)
+
+            sources = []
+            if bm25_rank is not None:
+                sources.append(f"BM25 #{bm25_rank}")
+            if vec_rank is not None:
+                sources.append(f"Vec #{vec_rank}")
+
+            if not sources:
+                source_str = "Not in top-k"
+            else:
+                source_str = " + ".join(sources)
+
+            meta = id_to_meta_impact.get(doc_id, {})
+            src = Path(meta.get("source", "unknown")).name
+            chunk_num = meta.get("chunk", "?")
+
+            print(f"  Final #{final_rank}: {src} [chunk {chunk_num}] ← {source_str}")
+        print()
 
     # Fetch fused docs for context
     got = collection.get(ids=fused_ids)
@@ -372,8 +465,8 @@ if __name__ == "__main__":
                        help="Reranking method: 'rrf' (mathematical, fast) or 'neural' (Cross-Encoder, more accurate)")
     p_ask.add_argument("--cross-encoder-model", default="cross-encoder/ms-marco-MiniLM-L-6-v2",
                        help="Cross-encoder model for neural reranking")
-    p_ask.add_argument("--verbose", action="store_true", help="Show complete prompt given to LLM")
-
+    p_ask.add_argument("--verbose", action="store_true",
+                       help="Show detailed retrieval results, reranking process, and complete prompt given to LLM")
     sp.add_parser("stats", help="Show number of chunks in both indices")
     sp.add_parser("reset", help="Delete Chroma and BM25 indices")
 

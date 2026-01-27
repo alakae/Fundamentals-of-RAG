@@ -9,6 +9,7 @@ A Retrieval-Augmented Generation (RAG) implementation combining BM25 keyword sea
 > - **Single “full” demo only**: the earlier incremental versions were removed (e.g., `app_v1.py`, `app_v2.py`) and the project is now centered around **`hybrid_rag.py`** as the main entry point.
 > - **Hybrid RAG focus**: documentation and usage were updated to emphasize the **hybrid retrieval pipeline** (BM25 + vector search + Reciprocal Rank Fusion), with expanded CLI guidance (init/ingest/ask/stats/reset) and updated project structure.
 > - **Add neural reranking option**
+> - **Include detailed reranking info and complete prompt in verbose output**
 > - **Dependency management migrated to `uv`**: added `pyproject.toml` and `uv.lock`, updated install/run instructions to use `uv sync` and `uv run ...`, and updated defaults (e.g., the example LLM model).
 > - **Ignore local DB artifacts**: `.gitignore` was updated to avoid committing local persistence artifacts (e.g., `chroma.sqlite3`).
 >

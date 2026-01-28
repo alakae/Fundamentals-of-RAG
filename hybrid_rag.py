@@ -276,10 +276,20 @@ def ask(query: str,
         llm_model: str = "llama3.2:3b",
         embedding_model: str = "nomic-embed-text",
         cross_encoder_model: str = "cross-encoder/ms-marco-MiniLM-L-6-v2",
-        k_each: int = 6,
+        k_each: int = 50,
+        rerank_k: int = 25,
         final_k: int = 5,
-        verbose: bool = False,
-        reranker: str = "rrf"):
+        verbose: bool = False):
+    """
+    Multi-Stage Filtering Funnel for RAG:
+    Stage 1: Broad Hybrid Retrieval (BM25 + Vector)
+    Stage 2: RRF Fusion and Trimming (k_each*2 → rerank_k)
+    Stage 3: Neural Reranking (rerank_k → rerank_k scored)
+    Stage 4: Final Selection (top final_k for LLM)
+    """
+
+    # ========== STAGE 1: BROAD HYBRID RETRIEVAL ==========
+    print(f"\n🔍 Stage 1: Broad Hybrid Retrieval (fetching {k_each} from each engine)...")
 
     # BM25 side
     bm25, bm25_ids = _load_bm25()
@@ -297,121 +307,140 @@ def ask(query: str,
     vec_ids = [doc_id for doc_id in vec["ids"][0]]
     vec_distances = vec["distances"][0] if "distances" in vec else None
 
-    # Show initial retrieval results if verbose
+    # Count unique candidates
+    all_initial_ids = list(dict.fromkeys(bm25_top_ids + vec_ids))
+    overlap_count = len(set(bm25_top_ids) & set(vec_ids))
+    print(f"   ✓ Retrieved {len(all_initial_ids)} unique candidates (BM25: {len(bm25_top_ids)}, Vector: {len(vec_ids)}, Overlap: {overlap_count})")
+
+    # Show initial retrieval details if verbose
     if verbose:
-        # Fetch metadata for display
-        all_initial_ids = list(dict.fromkeys(bm25_top_ids + vec_ids))
         initial_meta_data = collection.get(ids=all_initial_ids)
         id_to_meta_verbose = dict(zip(initial_meta_data["ids"], initial_meta_data["metadatas"]))
 
-        print("\n=== Initial Retrieval Results ===\n")
-        print(f"BM25 Top {k_each} Results:")
+        print("\n   === Detailed Stage 1 Results ===\n")
+        print(f"   BM25 Top {k_each} Results:")
         for rank, (doc_id, score) in enumerate(zip(bm25_top_ids, bm25_top_scores), 1):
             meta = id_to_meta_verbose.get(doc_id, {})
             src = Path(meta.get("source", "unknown")).name
             chunk_num = meta.get("chunk", "?")
-            print(f"  {rank}. {src} [chunk {chunk_num}] (score: {score:.4f})")
+            print(f"     {rank}. {src} [chunk {chunk_num}] (score: {score:.4f})")
 
-        print(f"\nVector Search Top {k_each} Results:")
+        print(f"\n   Vector Search Top {k_each} Results:")
         for rank, doc_id in enumerate(vec_ids, 1):
             meta = id_to_meta_verbose.get(doc_id, {})
             src = Path(meta.get("source", "unknown")).name
             chunk_num = meta.get("chunk", "?")
             dist_info = f" (distance: {vec_distances[rank-1]:.4f})" if vec_distances else ""
-            print(f"  {rank}. {src} [chunk {chunk_num}]{dist_info}")
+            print(f"     {rank}. {src} [chunk {chunk_num}]{dist_info}")
         print()
 
-    # Merge/Rerank based on selected method
-    neural_scores = None
-    if reranker == "neural":
-        # Combine unique candidates from both retrievers
-        all_candidate_ids = list(dict.fromkeys(bm25_top_ids + vec_ids))
+    # ========== STAGE 2: RRF FUSION + TRIMMING ==========
+    print(f"⚡ Stage 2: RRF Fusion + Filter (trimming to top {rerank_k})...")
 
-        if verbose:
-            print(f"=== Neural Reranking ===\n")
-            print(f"Combined candidate pool: {len(all_candidate_ids)} unique documents")
-            print(f"  - From BM25: {len([x for x in all_candidate_ids if x in bm25_top_ids])}")
-            print(f"  - From Vector: {len([x for x in all_candidate_ids if x in vec_ids])}")
-            print(f"  - Overlap: {len(set(bm25_top_ids) & set(vec_ids))}\n")
+    # Use RRF to merge and rank all candidates
+    # Get all candidates with RRF scores (not limited yet)
+    from collections import defaultdict
+    rrf_scores = defaultdict(float)
+    k = 60  # RRF constant
+    for lst in [bm25_top_ids, vec_ids]:
+        for rank, _id in enumerate(lst):
+            rrf_scores[_id] += 1.0 / (k + rank + 1)
 
-        # Fetch documents for neural reranking
-        candidates_data = collection.get(ids=all_candidate_ids)
-        candidates = [(doc_id, doc_text) for doc_id, doc_text in zip(candidates_data["ids"], candidates_data["documents"])]
+    # Sort by RRF score and trim to rerank_k
+    rrf_ranked_all = sorted(rrf_scores.items(), key=lambda kv: kv[1], reverse=True)
+    trimmed_ids = [doc_id for doc_id, _ in rrf_ranked_all[:rerank_k]]
 
-        # Load Cross-Encoder model and perform neural reranking
-        cross_encoder = CrossEncoder(cross_encoder_model)
-        fused_ids, neural_scores = neural_rerank(query, candidates, cross_encoder, final_k)
+    print(f"   ✓ Fused {len(all_initial_ids)} candidates → Trimmed to top {len(trimmed_ids)} (RRF scores from both engines)")
 
-        if verbose:
-            print(f"Neural Reranking Results (Top {final_k}):")
-            for rank, (doc_id, score) in enumerate(neural_scores[:final_k], 1):
-                meta = id_to_meta_verbose.get(doc_id, {})
-                src = Path(meta.get("source", "unknown")).name
-                chunk_num = meta.get("chunk", "?")
-                print(f"  {rank}. {src} [chunk {chunk_num}] (score: {score:.4f})")
-            print()
-    else:
-        # Default: RRF merge
-        fused_ids = rrf_merge(bm25_top_ids, vec_ids, topn=final_k)
+    if verbose:
+        print("\n   === Detailed Stage 2 Results ===\n")
+        print(f"   RRF-Ranked Top {rerank_k} (before neural reranking):")
+        # Fetch metadata for trimmed results
+        trimmed_meta_data = collection.get(ids=trimmed_ids)
+        id_to_meta_trimmed = dict(zip(trimmed_meta_data["ids"], trimmed_meta_data["metadatas"]))
 
-        if verbose:
-            # Fetch metadata for RRF results
-            rrf_meta_data = collection.get(ids=fused_ids)
-            id_to_meta_rrf = dict(zip(rrf_meta_data["ids"], rrf_meta_data["metadatas"]))
+        for rank, (doc_id, rrf_score) in enumerate(rrf_ranked_all[:rerank_k], 1):
+            meta = id_to_meta_trimmed.get(doc_id, {})
+            src = Path(meta.get("source", "unknown")).name
+            chunk_num = meta.get("chunk", "?")
+            print(f"     {rank}. {src} [chunk {chunk_num}] (RRF score: {rrf_score:.4f})")
+        print()
 
-            print(f"=== RRF Reranking ===\n")
-            print(f"Reciprocal Rank Fusion with k=60")
-            print(f"Final Top {final_k} Results:")
-            for rank, doc_id in enumerate(fused_ids, 1):
-                meta = id_to_meta_rrf.get(doc_id, {})
-                src = Path(meta.get("source", "unknown")).name
-                chunk_num = meta.get("chunk", "?")
-                print(f"  {rank}. {src} [chunk {chunk_num}]")
-            print()
+    # ========== STAGE 3: DEEP NEURAL RERANKING ==========
+    print(f"🧠 Stage 3: Deep Neural Reranking ({rerank_k} candidates with Cross-Encoder)...")
+
+    # Fetch documents for neural reranking
+    candidates_data = collection.get(ids=trimmed_ids)
+    candidates = [(doc_id, doc_text) for doc_id, doc_text in zip(candidates_data["ids"], candidates_data["documents"])]
+
+    # Load Cross-Encoder model and perform neural reranking
+    cross_encoder = CrossEncoder(cross_encoder_model)
+    fused_ids, neural_scores = neural_rerank(query, candidates, cross_encoder, final_k=rerank_k)
+
+    print(f"   ✓ Neural scoring complete. Top {final_k} will be selected for LLM context.")
+
+    if verbose:
+        print("\n   === Detailed Stage 3 Results ===\n")
+        print(f"   Neural Reranking (all {len(neural_scores)} scored candidates):")
+        for rank, (doc_id, score) in enumerate(neural_scores[:min(10, len(neural_scores))], 1):
+            meta = id_to_meta_trimmed.get(doc_id, {})
+            src = Path(meta.get("source", "unknown")).name
+            chunk_num = meta.get("chunk", "?")
+            print(f"     {rank}. {src} [chunk {chunk_num}] (neural score: {score:.4f})")
+        if len(neural_scores) > 10:
+            print(f"     ... (showing top 10 of {len(neural_scores)})")
+        print()
+
+    # ========== STAGE 4: FINAL SELECTION ==========
+    print(f"🎯 Stage 4: Final Selection (top {final_k} for LLM context)")
+
+    # Take top final_k from neural-reranked results
+    final_ids = fused_ids[:final_k]
+
+    print(f"   ✓ Pipeline complete: {len(all_initial_ids)} → {len(trimmed_ids)} → {len(final_ids)} documents\n")
 
     # Show ranking impact if verbose
     if verbose:
-        print("=== Ranking Impact ===\n")
+        print("   === Ranking Impact Analysis ===\n")
         # Create initial rank mappings
         bm25_ranks = {doc_id: rank + 1 for rank, doc_id in enumerate(bm25_top_ids)}
         vec_ranks = {doc_id: rank + 1 for rank, doc_id in enumerate(vec_ids)}
+        rrf_ranks = {doc_id: rank + 1 for rank, doc_id in enumerate(trimmed_ids)}
 
-        # Fetch metadata for impact display (reuse if already fetched for RRF)
-        if reranker == "rrf":
-            id_to_meta_impact = id_to_meta_rrf
-        else:
-            id_to_meta_impact = id_to_meta_verbose
-
-        for final_rank, doc_id in enumerate(fused_ids, 1):
+        for final_rank, doc_id in enumerate(final_ids, 1):
             bm25_rank = bm25_ranks.get(doc_id, None)
             vec_rank = vec_ranks.get(doc_id, None)
+            rrf_rank = rrf_ranks.get(doc_id, None)
+
+            # Find neural score
+            neural_score = next((score for _id, score in neural_scores if _id == doc_id), None)
 
             sources = []
             if bm25_rank is not None:
                 sources.append(f"BM25 #{bm25_rank}")
             if vec_rank is not None:
                 sources.append(f"Vec #{vec_rank}")
+            if rrf_rank is not None:
+                sources.append(f"RRF #{rrf_rank}")
 
-            if not sources:
-                source_str = "Not in top-k"
-            else:
-                source_str = " + ".join(sources)
+            source_str = " + ".join(sources) if sources else "Not in top-k"
 
-            meta = id_to_meta_impact.get(doc_id, {})
+            meta = id_to_meta_trimmed.get(doc_id, {})
             src = Path(meta.get("source", "unknown")).name
             chunk_num = meta.get("chunk", "?")
 
-            print(f"  Final #{final_rank}: {src} [chunk {chunk_num}] ← {source_str}")
+            neural_str = f" | Neural: {neural_score:.4f}" if neural_score else ""
+            print(f"     Final #{final_rank}: {src} [chunk {chunk_num}] ← {source_str}{neural_str}")
         print()
 
-    # Fetch fused docs for context
-    got = collection.get(ids=fused_ids)
+    # Fetch final docs for context
+    got = collection.get(ids=final_ids)
     id_to_doc = dict(zip(got["ids"], got["documents"]))
     id_to_meta = dict(zip(got["ids"], got["metadatas"]))
 
     # Build context with simple headers
     sections = []
-    for _id in fused_ids:
+    for _id in final_ids:
         meta = id_to_meta[_id]
         src = Path(meta["source"]).name
         sections.append(f"Source: {src} [chunk {meta['chunk']}]\n{id_to_doc[_id]}")
@@ -441,12 +470,12 @@ def ask(query: str,
     print("\n=== Answer ===\n")
     print(answer)
     print("\n--- Sources ---")
-    for _id in fused_ids:
+    for _id in final_ids:
         m = id_to_meta[_id]
         print(f"{Path(m['source']).name}  (chunk {m['chunk']})")
 
 if __name__ == "__main__":
-    p = argparse.ArgumentParser(description="Hybrid RAG: BM25 + Vector Search with RRF or Neural Cross-Encoder Reranking")
+    p = argparse.ArgumentParser(description="Hybrid RAG: Multi-Stage Filtering Funnel (BM25 + Vector → RRF → Neural Reranking)")
     sp = p.add_subparsers(dest="cmd", required=True)
 
     sp.add_parser("init", help="Quick environment check (Ollama + Chroma + BM25)")
@@ -455,18 +484,20 @@ if __name__ == "__main__":
     p_ing.add_argument("--dir", required=True, help="Folder or file path to ingest")
     p_ing.add_argument("--embed-model", default=EMBED_MODEL, help="Embedding model name")
 
-    p_ask = sp.add_parser("ask", help="Ask a question using hybrid search (BM25 + Vector)")
+    p_ask = sp.add_parser("ask", help="Ask a question using multi-stage filtering funnel")
     p_ask.add_argument("--query", required=True, help="Question string")
     p_ask.add_argument("--llm", default=LLM_MODEL, help="LLM model name")
     p_ask.add_argument("--embed-model", default=EMBED_MODEL, help="Embedding model name")
-    p_ask.add_argument("--k-each", type=int, default=6, help="Top-k from each retriever")
-    p_ask.add_argument("--final-k", type=int, default=5, help="Final top-k after fusion")
-    p_ask.add_argument("--reranker", choices=["rrf", "neural"], default="rrf",
-                       help="Reranking method: 'rrf' (mathematical, fast) or 'neural' (Cross-Encoder, more accurate)")
+    p_ask.add_argument("--k-each", type=int, default=50,
+                       help="Stage 1: Top-k from each retriever (BM25 + Vector) - default: 50 for broad recall")
+    p_ask.add_argument("--rerank-k", type=int, default=25,
+                       help="Stage 2: Trim RRF-fused results to this many candidates before neural reranking - default: 25")
+    p_ask.add_argument("--final-k", type=int, default=5,
+                       help="Stage 4: Final top-k after neural reranking to use as LLM context - default: 5")
     p_ask.add_argument("--cross-encoder-model", default="cross-encoder/ms-marco-MiniLM-L-6-v2",
-                       help="Cross-encoder model for neural reranking")
+                       help="Cross-encoder model for Stage 3 neural reranking")
     p_ask.add_argument("--verbose", action="store_true",
-                       help="Show detailed retrieval results, reranking process, and complete prompt given to LLM")
+                       help="Show detailed results for all 4 stages, ranking impact analysis, and complete LLM prompt")
     sp.add_parser("stats", help="Show number of chunks in both indices")
     sp.add_parser("reset", help="Delete Chroma and BM25 indices")
 
@@ -480,8 +511,8 @@ if __name__ == "__main__":
         elif args.cmd == "ask":
             ask(args.query, llm_model=args.llm, embedding_model=args.embed_model,
                 cross_encoder_model=args.cross_encoder_model,
-                k_each=args.k_each, final_k=args.final_k, verbose=args.verbose,
-                reranker=args.reranker)
+                k_each=args.k_each, rerank_k=args.rerank_k, final_k=args.final_k,
+                verbose=args.verbose)
         elif args.cmd == "stats":
             cmd_stats()
         elif args.cmd == "reset":

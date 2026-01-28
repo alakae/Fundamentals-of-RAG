@@ -1,5 +1,6 @@
 import argparse
 import hashlib
+import json
 import os
 import pickle
 import re
@@ -9,9 +10,67 @@ from pathlib import Path
 from typing import List, Dict, Tuple, Iterator
 from tqdm import tqdm
 import chromadb
+from pydantic import BaseModel
 from rank_bm25 import BM25Okapi
 from sentence_transformers import CrossEncoder
 import ollama
+
+
+class QueryExpansion(BaseModel):
+    """Structured output for LLM query expansion."""
+    variations: list[str]
+
+
+def expand_query(original_query: str, num_variations: int, llm_model: str, verbose: bool = False) -> List[str]:
+    """
+    Use LLM with structured output (Pydantic) to generate query variations.
+
+    Args:
+        original_query: The user's original query
+        num_variations: Number of variations to generate
+        llm_model: The LLM model to use for generation
+        verbose: Whether to print debug info
+
+    Returns:
+        List containing [original_query] + generated variations
+    """
+    if num_variations <= 0:
+        return [original_query]
+
+    prompt = f"""You are an AI search expert. Your goal is to expand the user's query into {num_variations} diverse variations to improve document retrieval.
+
+Requirements for each variation:
+1. Use different vocabulary (synonyms, technical vs. layman terms).
+2. Fix any obvious typos or spelling errors.
+3. Explicitly replace ambiguous pronouns (it, they, he, she) with the specific subjects being discussed.
+4. Maintain the original search intent without adding new constraints.
+5. Ensure each variation is a standalone, complete sentence.
+
+Original Query: "{original_query}"
+
+Provide exactly {num_variations} variations in the requested JSON format."""
+
+
+    try:
+        response = ollama.chat(
+            model=llm_model,
+            messages=[{"role": "user", "content": prompt}],
+            format=QueryExpansion.model_json_schema(),
+            options={"temperature": 0.7}
+        )
+
+        # Parse JSON response
+        result = json.loads(response["message"]["content"])
+        variations = result.get("variations", [])
+
+        # Return original + variations (limit to requested number)
+        return [original_query] + variations[:num_variations]
+
+    except Exception as e:
+        if verbose:
+            print(f"   ⚠ Query expansion failed: {e}")
+            print(f"   → Falling back to single query")
+        return [original_query]
 
 
 def _iter_files(root: Path) -> Iterator[Path]:
@@ -279,60 +338,142 @@ def ask(query: str,
         k_each: int = 50,
         rerank_k: int = 25,
         final_k: int = 5,
+        expand_queries: int = 0,
         verbose: bool = False):
     """
-    Multi-Stage Filtering Funnel for RAG:
-    Stage 1: Broad Hybrid Retrieval (BM25 + Vector)
-    Stage 2: RRF Fusion and Trimming (k_each*2 → rerank_k)
+    Multi-Stage Variable Funnel for RAG:
+    Stage 0: Dynamic Query Expansion (optional, LLM-powered)
+    Stage 1: Broad Hybrid Retrieval (BM25 + Vector × all queries)
+    Stage 2: RRF Fusion and Trimming (merged → rerank_k)
     Stage 3: Neural Reranking (rerank_k → rerank_k scored)
     Stage 4: Final Selection (top final_k for LLM)
     """
 
-    # ========== STAGE 1: BROAD HYBRID RETRIEVAL ==========
-    print(f"\n🔍 Stage 1: Broad Hybrid Retrieval (fetching {k_each} from each engine)...")
+    # ========== STAGE 0: DYNAMIC QUERY EXPANSION ==========
+    if expand_queries > 0:
+        print(f"\n🎯 Stage 0: Query Expansion (generating {expand_queries} variations)...")
+        all_queries = expand_query(query, expand_queries, llm_model, verbose)
+        print(f"   ✓ Expanding search to {len(all_queries)} queries total (1 original + {len(all_queries)-1} variations)")
 
-    # BM25 side
+        if verbose:
+            print("\n   === Query Variations ===\n")
+            print(f"   Original: {all_queries[0]}")
+            for i, var in enumerate(all_queries[1:], 1):
+                print(f"   Variation {i}: {var}")
+            print()
+    else:
+        all_queries = [query]
+        if verbose:
+            print(f"\n🔍 Stage 0: Skipped (using single query)")
+
+    # ========== STAGE 1: BROAD HYBRID RETRIEVAL (MULTI-QUERY) ==========
+    print(f"\n🔍 Stage 1: Broad Hybrid Retrieval ({len(all_queries)} queries × {k_each} per engine)...")
+
+    # Load BM25 and Chroma once
     bm25, bm25_ids = _load_bm25()
-    q_tokens = tokenize(query)
-    scores = bm25.get_scores(q_tokens)
-    bm25_top_idx = list(reversed(sorted(range(len(scores)), key=lambda i: scores[i])))[:k_each]
-    bm25_top_ids = [bm25_ids[i] for i in bm25_top_idx]
-    bm25_top_scores = [scores[i] for i in bm25_top_idx]
-
-    # Vector side (Chroma)
     client = chromadb.PersistentClient(path=str(CHROMA_DIR))
     collection = client.get_or_create_collection(COLLECTION_NAME)
-    q_emb = ollama.embeddings(model=embedding_model, prompt=query)["embedding"]
-    vec = collection.query(query_embeddings=[q_emb], n_results=k_each)
-    vec_ids = [doc_id for doc_id in vec["ids"][0]]
-    vec_distances = vec["distances"][0] if "distances" in vec else None
 
-    # Count unique candidates
+    # Track per-query statistics for verbose mode
+    per_query_stats = []
+
+    # Collect candidates from all query variations
+    all_bm25_ids = []
+    all_vec_ids = []
+    all_bm25_scores = {}  # doc_id -> best score across all queries
+
+    for q_idx, q in enumerate(all_queries):
+        # BM25 retrieval
+        q_tokens = tokenize(q)
+        scores = bm25.get_scores(q_tokens)
+        bm25_top_idx = list(reversed(sorted(range(len(scores)), key=lambda i: scores[i])))[:k_each]
+        q_bm25_ids = [bm25_ids[i] for i in bm25_top_idx]
+        q_bm25_scores = [scores[i] for i in bm25_top_idx]
+
+        # Track best BM25 score for each document
+        for doc_id, score in zip(q_bm25_ids, q_bm25_scores):
+            if doc_id not in all_bm25_scores or score > all_bm25_scores[doc_id]:
+                all_bm25_scores[doc_id] = score
+
+        all_bm25_ids.extend(q_bm25_ids)
+
+        # Vector retrieval
+        q_emb = ollama.embeddings(model=embedding_model, prompt=q)["embedding"]
+        vec = collection.query(query_embeddings=[q_emb], n_results=k_each)
+        q_vec_ids = vec["ids"][0]
+        all_vec_ids.extend(q_vec_ids)
+
+        # Track statistics for this query
+        if verbose or len(all_queries) > 1:
+            unique_before = len(set(all_bm25_ids[:-len(q_bm25_ids)] + all_vec_ids[:-len(q_vec_ids)]))
+            unique_after = len(set(all_bm25_ids + all_vec_ids))
+            new_docs = unique_after - unique_before if q_idx > 0 else unique_after
+            duplicate_docs = len(q_bm25_ids) + len(q_vec_ids) - new_docs
+
+            per_query_stats.append({
+                'query': q,
+                'query_idx': q_idx,
+                'bm25_count': len(q_bm25_ids),
+                'vec_count': len(q_vec_ids),
+                'new_docs': new_docs,
+                'duplicate_docs': duplicate_docs
+            })
+
+    # Deduplicate while preserving order
+    bm25_top_ids = list(dict.fromkeys(all_bm25_ids))
+    vec_ids = list(dict.fromkeys(all_vec_ids))
     all_initial_ids = list(dict.fromkeys(bm25_top_ids + vec_ids))
+
     overlap_count = len(set(bm25_top_ids) & set(vec_ids))
-    print(f"   ✓ Retrieved {len(all_initial_ids)} unique candidates (BM25: {len(bm25_top_ids)}, Vector: {len(vec_ids)}, Overlap: {overlap_count})")
+    print(f"   ✓ Retrieved {len(all_initial_ids)} unique candidates across {len(all_queries)} queries")
+    print(f"      (BM25: {len(bm25_top_ids)}, Vector: {len(vec_ids)}, Overlap: {overlap_count})")
 
-    # Show initial retrieval details if verbose
-    if verbose:
-        initial_meta_data = collection.get(ids=all_initial_ids)
-        id_to_meta_verbose = dict(zip(initial_meta_data["ids"], initial_meta_data["metadatas"]))
-
-        print("\n   === Detailed Stage 1 Results ===\n")
-        print(f"   BM25 Top {k_each} Results:")
-        for rank, (doc_id, score) in enumerate(zip(bm25_top_ids, bm25_top_scores), 1):
-            meta = id_to_meta_verbose.get(doc_id, {})
-            src = Path(meta.get("source", "unknown")).name
-            chunk_num = meta.get("chunk", "?")
-            print(f"     {rank}. {src} [chunk {chunk_num}] (score: {score:.4f})")
-
-        print(f"\n   Vector Search Top {k_each} Results:")
-        for rank, doc_id in enumerate(vec_ids, 1):
-            meta = id_to_meta_verbose.get(doc_id, {})
-            src = Path(meta.get("source", "unknown")).name
-            chunk_num = meta.get("chunk", "?")
-            dist_info = f" (distance: {vec_distances[rank-1]:.4f})" if vec_distances else ""
-            print(f"     {rank}. {src} [chunk {chunk_num}]{dist_info}")
+    # Show detailed retrieval stats if verbose or multi-query
+    if verbose and len(all_queries) > 1:
+        print("\n   === Per-Query Retrieval Stats ===\n")
+        for stat in per_query_stats:
+            q_label = "original" if stat['query_idx'] == 0 else f"variation {stat['query_idx']}"
+            print(f"   Query {stat['query_idx']} ({q_label}):")
+            print(f"      \"{stat['query']}\"")
+            print(f"      → {stat['new_docs']} new docs, {stat['duplicate_docs']} duplicates")
         print()
+
+    # Show initial retrieval details if verbose (show top results from first query)
+    if verbose:
+        # For verbose output, show top results from the ORIGINAL query only
+        q_tokens = tokenize(all_queries[0])
+        scores = bm25.get_scores(q_tokens)
+        bm25_top_idx = list(reversed(sorted(range(len(scores)), key=lambda i: scores[i])))[:min(k_each, 10)]
+        display_bm25_ids = [bm25_ids[i] for i in bm25_top_idx]
+        display_bm25_scores = [scores[i] for i in bm25_top_idx]
+
+        q_emb = ollama.embeddings(model=embedding_model, prompt=all_queries[0])["embedding"]
+        vec = collection.query(query_embeddings=[q_emb], n_results=min(k_each, 10))
+        display_vec_ids = vec["ids"][0]
+        display_vec_distances = vec["distances"][0] if "distances" in vec else None
+
+        # Fetch metadata for display
+        display_ids = list(dict.fromkeys(display_bm25_ids + display_vec_ids))
+        if display_ids:
+            initial_meta_data = collection.get(ids=display_ids)
+            id_to_meta_verbose = dict(zip(initial_meta_data["ids"], initial_meta_data["metadatas"]))
+
+            print(f"\n   === Detailed Stage 1 Results (Original Query) ===\n")
+            print(f"   BM25 Top {len(display_bm25_ids)} Results:")
+            for rank, (doc_id, score) in enumerate(zip(display_bm25_ids, display_bm25_scores), 1):
+                meta = id_to_meta_verbose.get(doc_id, {})
+                src = Path(meta.get("source", "unknown")).name
+                chunk_num = meta.get("chunk", "?")
+                print(f"     {rank}. {src} [chunk {chunk_num}] (score: {score:.4f})")
+
+            print(f"\n   Vector Search Top {len(display_vec_ids)} Results:")
+            for rank, doc_id in enumerate(display_vec_ids, 1):
+                meta = id_to_meta_verbose.get(doc_id, {})
+                src = Path(meta.get("source", "unknown")).name
+                chunk_num = meta.get("chunk", "?")
+                dist_info = f" (distance: {display_vec_distances[rank-1]:.4f})" if display_vec_distances else ""
+                print(f"     {rank}. {src} [chunk {chunk_num}]{dist_info}")
+            print()
 
     # ========== STAGE 2: RRF FUSION + TRIMMING ==========
     print(f"⚡ Stage 2: RRF Fusion + Filter (trimming to top {rerank_k})...")
@@ -475,7 +616,7 @@ def ask(query: str,
         print(f"{Path(m['source']).name}  (chunk {m['chunk']})")
 
 if __name__ == "__main__":
-    p = argparse.ArgumentParser(description="Hybrid RAG: Multi-Stage Filtering Funnel (BM25 + Vector → RRF → Neural Reranking)")
+    p = argparse.ArgumentParser(description="Hybrid RAG: Multi-Stage Variable Funnel (Query Expansion → BM25 + Vector → RRF → Neural → Selection)")
     sp = p.add_subparsers(dest="cmd", required=True)
 
     sp.add_parser("init", help="Quick environment check (Ollama + Chroma + BM25)")
@@ -484,12 +625,14 @@ if __name__ == "__main__":
     p_ing.add_argument("--dir", required=True, help="Folder or file path to ingest")
     p_ing.add_argument("--embed-model", default=EMBED_MODEL, help="Embedding model name")
 
-    p_ask = sp.add_parser("ask", help="Ask a question using multi-stage filtering funnel")
+    p_ask = sp.add_parser("ask", help="Ask a question using multi-stage variable funnel")
     p_ask.add_argument("--query", required=True, help="Question string")
     p_ask.add_argument("--llm", default=LLM_MODEL, help="LLM model name")
     p_ask.add_argument("--embed-model", default=EMBED_MODEL, help="Embedding model name")
+    p_ask.add_argument("--expand-queries", type=int, default=0,
+                       help="Stage 0: Generate N query variations using LLM (0=disabled, 1-10 recommended) - widens funnel for better recall")
     p_ask.add_argument("--k-each", type=int, default=50,
-                       help="Stage 1: Top-k from each retriever (BM25 + Vector) - default: 50 for broad recall")
+                       help="Stage 1: Top-k from each retriever per query (BM25 + Vector) - default: 50 for broad recall")
     p_ask.add_argument("--rerank-k", type=int, default=25,
                        help="Stage 2: Trim RRF-fused results to this many candidates before neural reranking - default: 25")
     p_ask.add_argument("--final-k", type=int, default=5,
@@ -497,7 +640,7 @@ if __name__ == "__main__":
     p_ask.add_argument("--cross-encoder-model", default="cross-encoder/ms-marco-MiniLM-L-6-v2",
                        help="Cross-encoder model for Stage 3 neural reranking")
     p_ask.add_argument("--verbose", action="store_true",
-                       help="Show detailed results for all 4 stages, ranking impact analysis, and complete LLM prompt")
+                       help="Show detailed results for all 5 stages, per-query stats, ranking impact analysis, and complete LLM prompt")
     sp.add_parser("stats", help="Show number of chunks in both indices")
     sp.add_parser("reset", help="Delete Chroma and BM25 indices")
 
@@ -512,7 +655,7 @@ if __name__ == "__main__":
             ask(args.query, llm_model=args.llm, embedding_model=args.embed_model,
                 cross_encoder_model=args.cross_encoder_model,
                 k_each=args.k_each, rerank_k=args.rerank_k, final_k=args.final_k,
-                verbose=args.verbose)
+                expand_queries=args.expand_queries, verbose=args.verbose)
         elif args.cmd == "stats":
             cmd_stats()
         elif args.cmd == "reset":

@@ -402,6 +402,7 @@ def ask(query: str,
         q_emb = ollama.embeddings(model=embedding_model, prompt=q)["embedding"]
         vec = collection.query(query_embeddings=[q_emb], n_results=k_each)
         q_vec_ids = vec["ids"][0]
+        q_vec_distances = vec["distances"][0] if "distances" in vec else None
         all_vec_ids.extend(q_vec_ids)
 
         # Track statistics for this query
@@ -417,7 +418,11 @@ def ask(query: str,
                 'bm25_count': len(q_bm25_ids),
                 'vec_count': len(q_vec_ids),
                 'new_docs': new_docs,
-                'duplicate_docs': duplicate_docs
+                'duplicate_docs': duplicate_docs,
+                'bm25_ids': q_bm25_ids[:10],  # Store top-10 for display
+                'bm25_scores': q_bm25_scores[:10],
+                'vec_ids': q_vec_ids[:10],  # Store top-10 for display
+                'vec_distances': q_vec_distances[:10] if q_vec_distances else None
             })
 
     # Deduplicate while preserving order
@@ -439,8 +444,45 @@ def ask(query: str,
             print(f"      → {stat['new_docs']} new docs, {stat['duplicate_docs']} duplicates")
         print()
 
+    # Show detailed results for ALL queries (not just the original) if verbose and multi-query
+    if verbose and len(all_queries) > 1:
+        # Fetch metadata for all unique IDs across all queries
+        all_display_ids = []
+        for stat in per_query_stats:
+            all_display_ids.extend(stat['bm25_ids'])
+            all_display_ids.extend(stat['vec_ids'])
+        all_display_ids = list(dict.fromkeys(all_display_ids))  # Deduplicate
+
+        if all_display_ids:
+            all_meta_data = collection.get(ids=all_display_ids)
+            id_to_meta_all_queries = dict(zip(all_meta_data["ids"], all_meta_data["metadatas"]))
+
+            print("\n   === Per-Query Detailed Results ===\n")
+            for stat in per_query_stats:
+                q_label = "original" if stat['query_idx'] == 0 else f"variation {stat['query_idx']}"
+                print(f"   Query {stat['query_idx']} ({q_label}): \"{stat['query']}\"\n")
+
+                print(f"   BM25 Top {len(stat['bm25_ids'])} Results:")
+                for rank, (doc_id, score) in enumerate(zip(stat['bm25_ids'], stat['bm25_scores']), 1):
+                    meta = id_to_meta_all_queries.get(doc_id, {})
+                    src = Path(meta.get("source", "unknown")).name
+                    chunk_num = meta.get("chunk", "?")
+                    print(f"     {rank}. {src} [chunk {chunk_num}] (score: {score:.4f})")
+
+                print(f"\n   Vector Search Top {len(stat['vec_ids'])} Results:")
+                for rank, doc_id in enumerate(stat['vec_ids'], 1):
+                    meta = id_to_meta_all_queries.get(doc_id, {})
+                    src = Path(meta.get("source", "unknown")).name
+                    chunk_num = meta.get("chunk", "?")
+                    if stat['vec_distances']:
+                        dist_info = f" (distance: {stat['vec_distances'][rank-1]:.4f})"
+                    else:
+                        dist_info = ""
+                    print(f"     {rank}. {src} [chunk {chunk_num}]{dist_info}")
+                print()
+
     # Show initial retrieval details if verbose (show top results from first query)
-    if verbose:
+    if verbose and len(all_queries) == 1:
         # For verbose output, show top results from the ORIGINAL query only
         q_tokens = tokenize(all_queries[0])
         scores = bm25.get_scores(q_tokens)

@@ -52,6 +52,61 @@ This project implements a **Multi-Stage Variable Funnel** - a RAG architecture t
 
 This variable funnel architecture combines query expansion from modern search engines with the multi-stage reranking pipeline used by major tech companies, providing +30-50% accuracy improvement while offering tunable recall/latency trade-offs.
 
+## Example
+
+Standalone LLMs often lack specific document knowledge, leading them to either hallucinate or incorrectly deny the existence of obscure facts. The Multi-Stage Variable Funnel overcomes this by identifying the precise "needle in the haystack"—in this case, the exact number of steps in Baker Street—while providing verifiable citations for every claim.
+
+Plain LLM query:
+
+```console
+$ llm -m "llama3.2:3b" "In the conversation with Watson, how many steps does the detective claim lead up from the hall to his room, and what is the lesson he is trying to teach?"
+I'm not aware of any specific scene or conversation in literature where a detective discusses stairs leading up to their room. Could you please provide more context or clarify which story or author you are referring to? I'll do my best to help.
+
+However, I can try to find the answer for you if you could tell me which character and conversation you're thinking of (e.g., Sherlock Holmes and Dr. Watson).
+```
+
+RAG query:
+
+```
+$ uv run hybrid_rag.py ask --query "In the conversation with Watson, how many steps does the detective claim lead up from the hall to his room, and what is the lesson he is trying to teach?" --expand-queries 5 --k-each 100 --rerank-k 50  --final-k 15  
+
+🎯 Stage 0: Query Expansion (generating 5 variations)...
+   ✓ Expanding search to 6 queries total (1 original + 5 variations)
+
+🔍 Stage 1: Broad Hybrid Retrieval (6 queries × 100 per engine)...
+   ✓ Retrieved 634 unique candidates across 6 queries
+      (BM25: 421, Vector: 272, Overlap: 59)
+⚡ Stage 2: RRF Fusion + Filter (trimming to top 50)...
+   ✓ Fused 634 candidates → Trimmed to top 50 (RRF scores from both engines)
+🧠 Stage 3: Deep Neural Reranking (50 candidates with Cross-Encoder)...
+   ✓ Neural scoring complete. Top 15 will be selected for LLM context.
+🎯 Stage 4: Final Selection (top 15 for LLM context)
+   ✓ Pipeline complete: 634 → 50 → 15 documents
+
+
+=== Answer ===
+
+In the conversation with Watson, Sherlock Holmes claims that there are 17 steps leading up from the hall to his room. The lesson he is trying to teach is the distinction between observing and seeing. He emphasizes that observation involves paying attention to details, while seeing involves merely perceiving something without truly understanding it.
+
+--- Sources ---
+adventuresofsherlockholmes.txt  (chunk 11)
+adventuresofsherlockholmes.txt  (chunk 368)
+adventuresofsherlockholmes.txt  (chunk 10)
+adventuresofsherlockholmes.txt  (chunk 571)
+adventuresofsherlockholmes.txt  (chunk 515)
+adventuresofsherlockholmes.txt  (chunk 233)
+adventuresofsherlockholmes.txt  (chunk 126)
+adventuresofsherlockholmes.txt  (chunk 79)
+adventuresofsherlockholmes.txt  (chunk 61)
+adventuresofsherlockholmes.txt  (chunk 286)
+adventuresofsherlockholmes.txt  (chunk 488)
+adventuresofsherlockholmes.txt  (chunk 818)
+adventuresofsherlockholmes.txt  (chunk 437)
+adventuresofsherlockholmes.txt  (chunk 403)
+adventuresofsherlockholmes.txt  (chunk 18)
+```
+
+
 ## Features
 
 - 🎯 **5-Stage Variable Funnel**: Sequential pipeline with dynamic width (Query Expansion → Hybrid → RRF → Neural → Selection)

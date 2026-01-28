@@ -45,6 +45,7 @@ Requirements for each variation:
 3. Explicitly replace ambiguous pronouns (it, they, he, she) with the specific subjects being discussed.
 4. Maintain the original search intent without adding new constraints.
 5. Ensure each variation is a standalone, complete sentence.
+6. Do not include any JSON formatting, braces, or quotes inside the variation strings.
 
 Original Query: "{original_query}"
 
